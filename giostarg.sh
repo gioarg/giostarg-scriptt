@@ -4,7 +4,10 @@
 instalar_dependencias() {
     sudo apt-get update
     sudo apt-get install -y curl uuid-runtime lsb-release
-    mkdir -p /etc/giostarg
+    sudo mkdir -p /etc/giostarg
+    if [ ! -f /etc/giostarg/usuarios.txt ]; then
+        sudo touch /etc/giostarg/usuarios.txt
+    fi
 }
 
 # Función para mostrar la cabecera
@@ -16,7 +19,7 @@ mostrar_cabecera() {
     
     OS=$(lsb_release -d | awk -F"\t" '{print $2}')
     HORA=$(TZ="America/Argentina/Buenos_Aires" date "+%H:%M:%S")
-    IP=$(curl -s ifconfig.me)
+    IP="239.132.12.1"  # IP de ejemplo
     RAM_TOTAL=$(free -m | awk '/^Mem:/{print $2"MB"}')
     RAM_USADA=$(free -m | awk '/^Mem:/{print $3"MB"}')
     RAM_LIBRE=$(free -m | awk '/^Mem:/{print $4"MB"}')
@@ -75,6 +78,7 @@ crear_usuario() {
     
     echo "Ingrese la contraseña (solo letras, mínimo 4 caracteres):"
     read -s password
+    echo "Contraseña ingresada: $password"  # Muestra la contraseña ingresada
     if [[ ! "$password" =~ ^[a-zA-Z]{4,}$ ]]; then
         echo "Contraseña no válida."
         return
@@ -86,10 +90,17 @@ crear_usuario() {
     echo "Ingrese el número máximo de conexiones:"
     read conexiones_max
     
-    useradd -m -e $(date -d "$dias_expiracion days" +%Y-%m-%d) -s /bin/bash "$nombre"
-    echo "$nombre:$password" | chpasswd
-    echo "$nombre $conexiones_max" >> /etc/giostarg/usuarios.txt
-    echo "Usuario creado exitosamente."
+    if useradd -m -e $(date -d "$dias_expiracion days" +%Y-%m-%d) -s /bin/bash "$nombre"; then
+        echo "$nombre:$password" | chpasswd
+        echo "$nombre $conexiones_max" >> /etc/giostarg/usuarios.txt
+        echo "Usuario creado con éxito."
+        echo "Nombre de usuario: $nombre"
+        echo "Contraseña: $password"
+        echo "Días de expiración: $dias_expiracion"
+        echo "Conexiones máximas: $conexiones_max"
+    else
+        echo "Error al crear el usuario."
+    fi
 }
 
 # Función para eliminar un usuario
@@ -99,9 +110,13 @@ eliminar_usuario() {
     echo "Seleccione el número del usuario que desea eliminar:"
     read numero
     usuario=$(sed "${numero}q;d" /etc/giostarg/usuarios.txt | awk '{print $1}')
-    userdel -r "$usuario"
-    sed -i "${numero}d" /etc/giostarg/usuarios.txt
-    echo "Usuario $usuario eliminado."
+    if id "$usuario" &>/dev/null; then
+        userdel -r "$usuario"
+        sed -i "${numero}d" /etc/giostarg/usuarios.txt
+        echo "Usuario $usuario eliminado."
+    else
+        echo "El usuario no existe."
+    fi
 }
 
 # Función para ver usuarios conectados
@@ -175,11 +190,18 @@ desinstalar_ws() {
 
 # Función para configurar el auto-inicio del script
 auto_iniciar_script() {
-    if grep -q "giostarg.sh" /etc/rc.local; then
-        sudo sed -i '/giostarg.sh/d' /etc/rc.local
-        echo "Auto-inicio desactivado."
+    if [ -f /etc/rc.local ]; then
+        if grep -q "giostarg.sh" /etc/rc.local; then
+            sudo sed -i '/giostarg.sh/d' /etc/rc.local
+            echo "Auto-inicio desactivado."
+        else
+            echo "sudo /bin/bash /etc/giostarg/giostarg.sh &" | sudo tee -a /etc/rc.local > /dev/null
+            echo "Auto-inicio activado."
+        fi
     else
+        echo "#!/bin/bash" | sudo tee /etc/rc.local > /dev/null
         echo "sudo /bin/bash /etc/giostarg/giostarg.sh &" | sudo tee -a /etc/rc.local > /dev/null
+        sudo chmod +x /etc/rc.local
         echo "Auto-inicio activado."
     fi
 }
@@ -206,12 +228,18 @@ actualizar_script() {
 
 # Función para desinstalar el script
 desinstalar_script() {
-    sudo rm -f /etc/giostarg/giostarg.sh
-    sudo rm -f /etc/giostarg/key.txt
-    sudo rm -f /etc/giostarg/usuarios.txt
-    sudo rm -f /etc/giostarg/websocket.py
-    sudo pkill -f websocket.py
-    echo "Script desinstalado."
+    echo "¿Está seguro de que desea desinstalar el script? [s/n]"
+    read confirmacion
+    if [[ "$confirmacion" == "s" || "$confirmacion" == "S" ]]; then
+        sudo rm -f /etc/giostarg/giostarg.sh
+        sudo rm -f /etc/giostarg/key.txt
+        sudo rm -f /etc/giostarg/usuarios.txt
+        sudo rm -f /etc/giostarg/websocket.py
+        sudo pkill -f websocket.py
+        echo "Script desinstalado."
+    else
+        echo "Desinstalación cancelada."
+    fi
 }
 
 # Función principal para manejar la selección del menú principal
@@ -229,7 +257,9 @@ menu_principal() {
 }
 
 # Instalación inicial
-instalar_dependencias
+if [ ! -f /etc/giostarg/giostarg.sh ]; then
+    instalar_dependencias
+fi
 
 # Llamar a la función principal para iniciar el script
 menu_principal
