@@ -3,11 +3,8 @@
 # Función para instalar dependencias necesarias
 instalar_dependencias() {
     sudo apt-get update
-    sudo apt-get install -y curl uuid-runtime lsb-release
-    sudo mkdir -p /etc/giostarg
-    if [ ! -f /etc/giostarg/usuarios.txt ]; then
-        sudo touch /etc/giostarg/usuarios.txt
-    fi
+    sudo apt-get install -y curl uuid-runtime lsb-release python3-pip
+    mkdir -p /etc/giostarg
 }
 
 # Función para mostrar la cabecera
@@ -19,7 +16,7 @@ mostrar_cabecera() {
     
     OS=$(lsb_release -d | awk -F"\t" '{print $2}')
     HORA=$(TZ="America/Argentina/Buenos_Aires" date "+%H:%M:%S")
-    IP="239.132.12.1"  # IP de ejemplo
+    IP=$(curl -s ifconfig.me)
     RAM_TOTAL=$(free -m | awk '/^Mem:/{print $2"MB"}')
     RAM_USADA=$(free -m | awk '/^Mem:/{print $3"MB"}')
     RAM_LIBRE=$(free -m | awk '/^Mem:/{print $4"MB"}')
@@ -78,7 +75,6 @@ crear_usuario() {
     
     echo "Ingrese la contraseña (solo letras, mínimo 4 caracteres):"
     read -s password
-    echo "Contraseña ingresada: $password"  # Muestra la contraseña ingresada
     if [[ ! "$password" =~ ^[a-zA-Z]{4,}$ ]]; then
         echo "Contraseña no válida."
         return
@@ -90,17 +86,18 @@ crear_usuario() {
     echo "Ingrese el número máximo de conexiones:"
     read conexiones_max
     
-    if useradd -m -e $(date -d "$dias_expiracion days" +%Y-%m-%d) -s /bin/bash "$nombre"; then
-        echo "$nombre:$password" | chpasswd
-        echo "$nombre $conexiones_max" >> /etc/giostarg/usuarios.txt
-        echo "Usuario creado con éxito."
-        echo "Nombre de usuario: $nombre"
-        echo "Contraseña: $password"
-        echo "Días de expiración: $dias_expiracion"
-        echo "Conexiones máximas: $conexiones_max"
-    else
-        echo "Error al crear el usuario."
-    fi
+    useradd -m -e $(date -d "$dias_expiracion days" +%Y-%m-%d) -s /bin/bash "$nombre"
+    echo "$nombre:$password" | chpasswd
+    echo "$nombre $conexiones_max" >> /etc/giostarg/usuarios.txt
+    
+    # Mostrar todos los datos ingresados
+    echo "————————————————————————————————————————————————————"
+    echo "Nombre: $nombre"
+    echo "Contraseña: $password"
+    echo "Días de expiración: $dias_expiracion"
+    echo "Máximo de conexiones: $conexiones_max"
+    echo "Usuario creado exitosamente."
+    echo "————————————————————————————————————————————————————"
 }
 
 # Función para eliminar un usuario
@@ -110,13 +107,9 @@ eliminar_usuario() {
     echo "Seleccione el número del usuario que desea eliminar:"
     read numero
     usuario=$(sed "${numero}q;d" /etc/giostarg/usuarios.txt | awk '{print $1}')
-    if id "$usuario" &>/dev/null; then
-        userdel -r "$usuario"
-        sed -i "${numero}d" /etc/giostarg/usuarios.txt
-        echo "Usuario $usuario eliminado."
-    else
-        echo "El usuario no existe."
-    fi
+    userdel -r "$usuario"
+    sed -i "${numero}d" /etc/giostarg/usuarios.txt
+    echo "Usuario $usuario eliminado."
 }
 
 # Función para ver usuarios conectados
@@ -138,8 +131,8 @@ menu_protocolos_herramientas() {
         echo "————————————————————————————————————————————————————"
         echo " [1] ➛ Instalar Ws 80"
         echo " [2] ➛ Desinstalar Ws"
-        echo " [3] ➛ AUTO INICIAR SCRIPT ----------> [off]"
-        echo " [4] ➛ TCP SPEED BBR        ---------> [Off]"
+        echo " [3] ➛ AUTO INICIAR SCRIPT ----------> [$(auto_inicio_estado)]"
+        echo " [4] ➛ TCP SPEED BBR        ---------> [$(bbr_estado)]"
         echo " [5] ➛ ACTUALIZAR"
         echo " [6] ➛ DESINSTALAR"
         echo " [0] ➛ VOLVER"
@@ -161,7 +154,6 @@ menu_protocolos_herramientas() {
 
 # Función para instalar WebSocket en el puerto 80
 instalar_ws() {
-    sudo apt-get install -y python3-pip
     pip3 install flask flask-socketio
     cat <<EOF > /etc/giostarg/websocket.py
 from flask import Flask, render_template
@@ -185,23 +177,17 @@ EOF
 desinstalar_ws() {
     sudo pkill -f websocket.py
     sudo apt-get remove --purge -y python3-pip
+    sudo rm -f /etc/giostarg/websocket.py
     echo "WebSocket desinstalado."
 }
 
 # Función para configurar el auto-inicio del script
 auto_iniciar_script() {
-    if [ -f /etc/rc.local ]; then
-        if grep -q "giostarg.sh" /etc/rc.local; then
-            sudo sed -i '/giostarg.sh/d' /etc/rc.local
-            echo "Auto-inicio desactivado."
-        else
-            echo "sudo /bin/bash /etc/giostarg/giostarg.sh &" | sudo tee -a /etc/rc.local > /dev/null
-            echo "Auto-inicio activado."
-        fi
+    if grep -q "giostarg.sh" /etc/rc.local; then
+        sudo sed -i '/giostarg.sh/d' /etc/rc.local
+        echo "Auto-inicio desactivado."
     else
-        echo "#!/bin/bash" | sudo tee /etc/rc.local > /dev/null
         echo "sudo /bin/bash /etc/giostarg/giostarg.sh &" | sudo tee -a /etc/rc.local > /dev/null
-        sudo chmod +x /etc/rc.local
         echo "Auto-inicio activado."
     fi
 }
@@ -221,6 +207,7 @@ gestionar_tcp_bbr() {
 
 # Función para actualizar el script
 actualizar_script() {
+    echo "Actualizando script..."
     sudo wget -O /etc/giostarg/giostarg.sh https://github.com/tuusuario/tu-repo/raw/main/giostarg.sh
     sudo chmod +x /etc/giostarg/giostarg.sh
     echo "Script actualizado."
@@ -230,15 +217,32 @@ actualizar_script() {
 desinstalar_script() {
     echo "¿Está seguro de que desea desinstalar el script? [s/n]"
     read confirmacion
-    if [[ "$confirmacion" == "s" || "$confirmacion" == "S" ]]; then
+    if [[ "$confirmacion" =~ ^[sS]$ ]]; then
         sudo rm -f /etc/giostarg/giostarg.sh
-        sudo rm -f /etc/giostarg/key.txt
-        sudo rm -f /etc/giostarg/usuarios.txt
         sudo rm -f /etc/giostarg/websocket.py
+        sudo rm -f /etc/giostarg/usuarios.txt
         sudo pkill -f websocket.py
         echo "Script desinstalado."
     else
         echo "Desinstalación cancelada."
+    fi
+}
+
+# Función para obtener el estado del auto-inicio
+auto_inicio_estado() {
+    if grep -q "giostarg.sh" /etc/rc.local; then
+        echo "On"
+    else
+        echo "Off"
+    fi
+}
+
+# Función para obtener el estado de TCP BBR
+bbr_estado() {
+    if lsmod | grep -q 'tcp_bbr'; then
+        echo "On"
+    else
+        echo "Off"
     fi
 }
 
@@ -257,9 +261,7 @@ menu_principal() {
 }
 
 # Instalación inicial
-if [ ! -f /etc/giostarg/giostarg.sh ]; then
-    instalar_dependencias
-fi
+instalar_dependencias
 
 # Llamar a la función principal para iniciar el script
 menu_principal
