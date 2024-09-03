@@ -1,29 +1,5 @@
 #!/bin/bash
 
-# Función para verificar la clave de autorización
-verificar_clave() {
-    EXPIRATION_TIME=14400
-    read -p "Por favor, ingresa la clave de autorización: " INPUT_KEY
-    
-    if [[ -f /etc/giostarg/key.txt ]]; then
-        STORED_KEY=$(cut -d':' -f1 /etc/giostarg/key.txt)
-        STORED_TIMESTAMP=$(cut -d':' -f2 /etc/giostarg/key.txt)
-    else
-        echo "Error: no se encontró ninguna clave almacenada."
-        exit 1
-    fi
-
-    CURRENT_TIMESTAMP=$(date +%s)
-    TIME_DIFF=$((CURRENT_TIMESTAMP - STORED_TIMESTAMP))
-
-    if [[ "$INPUT_KEY" == "$STORED_KEY" && "$TIME_DIFF" -le "$EXPIRATION_TIME" ]]; then
-        echo "Clave válida. Continuando con la instalación..."
-    else
-        echo "Clave inválida o expirada."
-        exit 1
-    fi
-}
-
 # Función para instalar dependencias necesarias
 instalar_dependencias() {
     sudo apt-get update
@@ -169,7 +145,6 @@ menu_protocolos_herramientas() {
 }
 
 # Función para instalar WebSocket en el puerto 80
-# Función para instalar WebSocket en el puerto 80
 instalar_ws() {
     sudo apt-get install -y python3-pip
     pip3 install flask flask-socketio
@@ -253,9 +228,8 @@ menu_principal() {
     done
 }
 
-# Instalación inicial y verificación de clave
+# Instalación inicial
 instalar_dependencias
-verificar_clave
 
 # Llamar a la función principal para iniciar el script
 menu_principal
