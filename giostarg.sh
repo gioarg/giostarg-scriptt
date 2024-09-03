@@ -1,10 +1,14 @@
 #!/bin/bash
 
+# Ruta del archivo de estado
+ESTADO_ARCHIVO="/etc/giostarg/instalado.txt"
+
 # Función para instalar dependencias necesarias
 instalar_dependencias() {
     sudo apt-get update
-    sudo apt-get install -y curl uuid-runtime lsb-release python3-pip
+    sudo apt-get install -y curl uuid-runtime lsb-release
     mkdir -p /etc/giostarg
+    touch "$ESTADO_ARCHIVO"
 }
 
 # Función para mostrar la cabecera
@@ -89,15 +93,12 @@ crear_usuario() {
     useradd -m -e $(date -d "$dias_expiracion days" +%Y-%m-%d) -s /bin/bash "$nombre"
     echo "$nombre:$password" | chpasswd
     echo "$nombre $conexiones_max" >> /etc/giostarg/usuarios.txt
-    
-    # Mostrar todos los datos ingresados
-    echo "————————————————————————————————————————————————————"
+    echo "Datos del usuario creado:"
     echo "Nombre: $nombre"
     echo "Contraseña: $password"
-    echo "Días de expiración: $dias_expiracion"
-    echo "Máximo de conexiones: $conexiones_max"
+    echo "Expiración: $(date -d "$dias_expiracion days" +%Y-%m-%d)"
+    echo "Conexiones máximas: $conexiones_max"
     echo "Usuario creado exitosamente."
-    echo "————————————————————————————————————————————————————"
 }
 
 # Función para eliminar un usuario
@@ -129,10 +130,10 @@ menu_protocolos_herramientas() {
         echo "❯❯❯❯❯❯ @giostarg ❮❮❮❮❮❮ [Version 1]"
         echo "≪━━─━─━━━─━─━─━─━─━━─━─━─◈─━─━─━─━─━━━─━─━─━━━─━─━≫"
         echo "————————————————————————————————————————————————————"
-        echo " [1] ➛ Instalar Ws 80"
-        echo " [2] ➛ Desinstalar Ws"
-        echo " [3] ➛ AUTO INICIAR SCRIPT ----------> [$(auto_inicio_estado)]"
-        echo " [4] ➛ TCP SPEED BBR        ---------> [$(bbr_estado)]"
+        echo " [1] ➛ Instalar Ws 80            ---------> [$(estado_ws)]"
+        echo " [2] ➛ Desinstalar Ws              ---------> [$(estado_ws)]"
+        echo " [3] ➛ AUTO INICIAR SCRIPT         ---------> [$(auto_inicio_estado)]"
+        echo " [4] ➛ TCP SPEED BBR              ---------> [$(bbr_estado)]"
         echo " [5] ➛ ACTUALIZAR"
         echo " [6] ➛ DESINSTALAR"
         echo " [0] ➛ VOLVER"
@@ -154,6 +155,11 @@ menu_protocolos_herramientas() {
 
 # Función para instalar WebSocket en el puerto 80
 instalar_ws() {
+    if [ -f /etc/giostarg/websocket.py ]; then
+        echo "WebSocket ya está instalado."
+        return
+    fi
+    sudo apt-get install -y python3-pip
     pip3 install flask flask-socketio
     cat <<EOF > /etc/giostarg/websocket.py
 from flask import Flask, render_template
@@ -169,12 +175,18 @@ def index():
 if __name__ == '__main__':
     socketio.run(app, port=80)
 EOF
+    sudo nohup python3 /etc/giostarg/web
+    # Continuación de la función para instalar WebSocket
     sudo nohup python3 /etc/giostarg/websocket.py > /dev/null 2>&1 &
     echo "WebSocket instalado y ejecutándose en el puerto 80."
 }
 
 # Función para desinstalar WebSocket
 desinstalar_ws() {
+    if [ ! -f /etc/giostarg/websocket.py ]; then
+        echo "WebSocket no está instalado."
+        return
+    fi
     sudo pkill -f websocket.py
     sudo apt-get remove --purge -y python3-pip
     sudo rm -f /etc/giostarg/websocket.py
@@ -207,48 +219,60 @@ gestionar_tcp_bbr() {
 
 # Función para actualizar el script
 actualizar_script() {
-    echo "Actualizando script..."
-    sudo wget -O /etc/giostarg/giostarg.sh https://github.com/tuusuario/tu-repo/raw/main/giostarg.sh
-    sudo chmod +x /etc/giostarg/giostarg.sh
+    git pull
     echo "Script actualizado."
 }
 
 # Función para desinstalar el script
 desinstalar_script() {
-    echo "¿Está seguro de que desea desinstalar el script? [s/n]"
+    echo -n "¿Está seguro de que desea desinstalar el script? (s/n): "
     read confirmacion
-    if [[ "$confirmacion" =~ ^[sS]$ ]]; then
+    if [ "$confirmacion" == "s" ]; then
         sudo rm -f /etc/giostarg/giostarg.sh
-        sudo rm -f /etc/giostarg/websocket.py
+        sudo rm -f /etc/giostarg/key.txt
         sudo rm -f /etc/giostarg/usuarios.txt
+        sudo rm -f /etc/giostarg/websocket.py
         sudo pkill -f websocket.py
+        sudo rm -f "$ESTADO_ARCHIVO"
         echo "Script desinstalado."
     else
         echo "Desinstalación cancelada."
     fi
 }
 
-# Función para obtener el estado del auto-inicio
-auto_inicio_estado() {
-    if grep -q "giostarg.sh" /etc/rc.local; then
-        echo "On"
+# Función para verificar el estado de WebSocket
+estado_ws() {
+    if [ -f /etc/giostarg/websocket.py ]; then
+        echo "ON"
     else
-        echo "Off"
+        echo "OFF"
     fi
 }
 
-# Función para obtener el estado de TCP BBR
+# Función para verificar el estado del auto-inicio del script
+auto_inicio_estado() {
+    if grep -q "giostarg.sh" /etc/rc.local; then
+        echo "ON"
+    else
+        echo "OFF"
+    fi
+}
+
+# Función para verificar el estado de TCP BBR
 bbr_estado() {
     if lsmod | grep -q 'tcp_bbr'; then
-        echo "On"
+        echo "ON"
     else
-        echo "Off"
+        echo "OFF"
     fi
 }
 
 # Función principal para manejar la selección del menú principal
 menu_principal() {
     while true; do
+        if [ ! -f "$ESTADO_ARCHIVO" ]; then
+            instalar_dependencias
+        fi
         mostrar_cabecera
         read opcion
         case $opcion in
@@ -259,9 +283,6 @@ menu_principal() {
         esac
     done
 }
-
-# Instalación inicial
-instalar_dependencias
 
 # Llamar a la función principal para iniciar el script
 menu_principal
